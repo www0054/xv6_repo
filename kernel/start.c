@@ -52,6 +52,7 @@ void start() {
     // init uart and printf
     consoleinit();
     printfinit();
+    printf("[210110424] in start, init driver, interrupts and change mode\n");
   }
 
   // switch to supervisor mode and jump to main().
@@ -63,6 +64,7 @@ void start() {
 // which turns them into software interrupts for
 // devintr() in trap.c.
 void timerinit() {
+  
   // each CPU has a separate source of timer interrupts.
   int id = r_mhartid();
 
