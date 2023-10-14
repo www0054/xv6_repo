@@ -271,6 +271,7 @@ int fork(void) {
 // Caller must hold p->lock.
 void reparent(struct proc *p) {
   struct proc *pp;
+  int i = 0;
 
   for (pp = proc; pp < &proc[NPROC]; pp++) {
     // this code uses pp->parent without holding pp->lock.
@@ -281,6 +282,16 @@ void reparent(struct proc *p) {
       // pp->parent can't change between the check and the acquire()
       // because only the parent changes it, and we're the parent.
       acquire(&pp->lock);
+
+      switch(pp->state){
+        case 0: exit_info("proc %d exit, child %d, pid %d, name %s, state unused\n", p->pid, i, pp->pid, pp->name);break;
+        case 1: exit_info("proc %d exit, child %d, pid %d, name %s, state sleep\n", p->pid, i, pp->pid, pp->name);break;
+        case 2: exit_info("proc %d exit, child %d, pid %d, name %s, state runble\n", p->pid, i, pp->pid, pp->name);break;
+        case 3: exit_info("proc %d exit, child %d, pid %d, name %s, state run\n", p->pid, i, pp->pid, pp->name);break;
+        case 4: exit_info("proc %d exit, child %d, pid %d, name %s, state zombie\n", p->pid, i, pp->pid, pp->name);break;
+      }
+      i++;
+
       pp->parent = initproc;
       // we should wake up init here, but that would require
       // initproc->lock, which would be a deadlock, since we hold
@@ -338,6 +349,14 @@ void exit(int status) {
 
   acquire(&p->lock);
 
+  switch(original_parent->state){
+    case 0: exit_info("proc %d exit, parent pid %d, name %s, state unused\n", p->pid, original_parent->pid, original_parent->name);break;
+    case 1: exit_info("proc %d exit, parent pid %d, name %s, state sleep\n", p->pid, original_parent->pid, original_parent->name);break;
+    case 2: exit_info("proc %d exit, parent pid %d, name %s, state runble\n", p->pid, original_parent->pid, original_parent->name);break;
+    case 3: exit_info("proc %d exit, parent pid %d, name %s, state run\n", p->pid, original_parent->pid, original_parent->name);break;
+    case 4: exit_info("proc %d exit, parent pid %d, name %s, state zombie\n", p->pid, original_parent->pid, original_parent->name);break;
+  }
+
   // Give any children to init.
   reparent(p);
 
@@ -356,7 +375,7 @@ void exit(int status) {
 
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
-int wait(uint64 addr) {
+int wait(uint64 addr, int flags) {
   struct proc *np;
   int havekids, pid;
   struct proc *p = myproc();
@@ -401,7 +420,11 @@ int wait(uint64 addr) {
     }
 
     // Wait for a child to exit.
-    sleep(p, &p->lock);  // DOC: wait-sleep
+    if(!flags)sleep(p, &p->lock);  // DOC: wait-sleep
+    else{
+      release(&p->lock);
+      return -1;
+    }
   }
 }
 
