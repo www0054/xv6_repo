@@ -20,6 +20,7 @@ static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
 extern char trampoline[];  // trampoline.S
+extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 // initialize the proc table at boot time.
 void procinit(void) {
@@ -28,15 +29,6 @@ void procinit(void) {
   initlock(&pid_lock, "nextpid");
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
-
-    // Allocate a page for the process's kernel stack.
-    // Map it high in memory, followed by an invalid
-    // guard page.
-    char *pa = kalloc();
-    if (pa == 0) panic("kalloc");
-    uint64 va = KSTACK((int)(p - proc));
-    kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-    p->kstack = va;
   }
   kvminithart();
 }
@@ -103,6 +95,16 @@ found:
     return 0;
   }
 
+  // Allocate a page for the process's kernel stack.
+  // Map it high in memory, followed by an invalid
+  // guard page.
+  p->k_pagetable = kvminit2();
+  char *pa = kalloc();
+  if (pa == 0) panic("kalloc");
+  uint64 va = KSTACK((int)(p - proc));
+  mappages(p->k_pagetable, va, PGSIZE, (uint64)pa, PTE_R | PTE_W);
+  p->kstack = va;
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if (p->pagetable == 0) {
@@ -135,6 +137,15 @@ static void freeproc(struct proc *p) {
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+
+  // 释放进程的内核栈
+  void *kstack_pa = (void*)kvmpa2(p->k_pagetable, p->kstack);
+  kfree(kstack_pa);
+  p->kstack = 0;
+  // 释放进程页表
+  free_kernelpagetable(p->k_pagetable);
+  p->k_pagetable = 0;
+
   p->state = UNUSED;
 }
 
@@ -192,6 +203,7 @@ void userinit(void) {
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  kvmcopymappings(p->pagetable, p->k_pagetable, 0, p->sz); // 同步程序内存映射到进程内核页表中
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -213,11 +225,21 @@ int growproc(int n) {
 
   sz = p->sz;
   if (n > 0) {
-    if ((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+    uint64 newsz;
+    if ((newsz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    // 内核页表中的映射同步扩大
+    if(kvmcopymappings(p->pagetable, p->k_pagetable, sz, n) != 0) {
+      uvmdealloc(p->pagetable, newsz, sz);
+      return -1;
+    }
+    sz = newsz;
   } else if (n < 0) {
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    // sz = uvmdealloc(p->pagetable, sz, sz + n);
+    uvmdealloc(p->pagetable, sz, sz + n);
+    // 内核页表中的映射同步缩小
+    sz = kvmdealloc(p->k_pagetable, sz, sz + n);
   }
   p->sz = sz;
   return 0;
@@ -241,6 +263,9 @@ int fork(void) {
     release(&np->lock);
     return -1;
   }
+  // 调用 kvmcopymappings，将新进程用户页表映射拷贝一份到新进程内核页表中
+  kvmcopymappings(np->pagetable, np->k_pagetable, 0, p->sz);
+
   np->sz = p->sz;
 
   np->parent = p;
@@ -430,7 +455,11 @@ void scheduler(void) {
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        w_satp(MAKE_SATP(p->k_pagetable));
+        sfence_vma();
         swtch(&c->context, &p->context);
+        kvminithart();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.

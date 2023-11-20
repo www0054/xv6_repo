@@ -179,6 +179,13 @@ int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             test_pagetable();
+void            vmprint(pagetable_t pagetable);
+pagetable_t     kvminit2();
+void free_kernelpagetable(pagetable_t pagetable);
+pte_t *walk(pagetable_t pagetable, uint64 va, int alloc);
+uint64 kvmpa2(pagetable_t pagetable, uint64 va);
+int kvmcopymappings(pagetable_t src, pagetable_t dst, uint64 start, uint64 sz);
+uint64 kvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz);
 
 // plic.c
 void            plicinit(void);
@@ -224,3 +231,7 @@ int             sockread(struct sock *, uint64, int);
 int             sockwrite(struct sock *, uint64, int);
 void            sockrecvudp(struct mbuf*, uint32, uint16, uint16);
 #endif
+
+// vmcopyin.c
+int copyin_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len);
+int copyinstr_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max);
